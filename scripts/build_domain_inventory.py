@@ -1,13 +1,25 @@
+import gzip
+import os
+from pathlib import Path
 from urllib.parse import urlparse
-import requests
 
-from utils import read_set, write_sorted_set
+from utils import RateLimiter, throttled_get
 
 COUNTRY_INDEX_URL = (
     "https://api.github.com/repos/"
     "InternetHealthReport/crux-top-lists-country/"
     "contents/data/country"
 )
+
+# Use GITHUB_TOKEN if available to authenticate requests and get higher rate limits (5,000 req/hr).
+# If authenticated, use a fast interval (1.0s); otherwise, keep a conservative delay (15.0s).
+GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN")
+HEADERS = {}
+if GITHUB_TOKEN:
+    HEADERS["Authorization"] = f"token {GITHUB_TOKEN}"
+
+interval = 1.0 if GITHUB_TOKEN else 15.0
+GITHUB_LIMITER = RateLimiter(min_interval=interval)
 
 
 def extract_domain(origin):
@@ -17,64 +29,108 @@ def extract_domain(origin):
         return None
 
 
-def get_country_files():
-    r = requests.get(COUNTRY_INDEX_URL, timeout=60)
-    r.raise_for_status()
+def get_country_dirs():
+    r = throttled_get(
+        COUNTRY_INDEX_URL,
+        limiter=GITHUB_LIMITER,
+        headers=HEADERS,
+        timeout=60,
+    )
 
-    files = []
+    dirs = []
 
     for item in r.json():
-        if item["name"].endswith(".csv"):
-            files.append(item["download_url"])
+        if item["type"] == "dir":
+            dirs.append(item["url"])
 
-    return files
+    return dirs
 
 
-def download_domains(csv_url):
+def get_latest_country_file(dir_url):
+    r = throttled_get(
+        dir_url,
+        limiter=GITHUB_LIMITER,
+        headers=HEADERS,
+        timeout=60,
+    )
+
+    latest_name = None
+    latest_url = None
+
+    for item in r.json():
+        name = item["name"]
+
+        if not name.endswith(".csv.gz"):
+            continue
+
+        # File names follow the YYYYMM.csv.gz pattern, so a plain
+        # lexicographic comparison also yields the chronologically latest one.
+        if latest_name is None or name > latest_name:
+            latest_name = name
+            latest_url = item["download_url"]
+
+    return latest_url
+
+
+def download_ranked_domains(csv_url):
     print(f"Downloading {csv_url}")
 
-    r = requests.get(csv_url, timeout=120)
-    r.raise_for_status()
+    r = throttled_get(csv_url, limiter=GITHUB_LIMITER, timeout=120)
 
-    domains = set()
+    text = gzip.decompress(r.content).decode()
 
-    lines = r.text.splitlines()
+    ranked = {}
+
+    lines = text.splitlines()
 
     for row in lines[1:]:
         parts = row.split(",")
 
-        if not parts:
+        if len(parts) < 2:
             continue
 
         domain = extract_domain(parts[0])
 
-        if domain:
-            domains.add(domain.lower())
+        if not domain:
+            continue
 
-    return domains
+        try:
+            rank = int(parts[1])
+        except ValueError:
+            continue
+
+        domain = domain.lower()
+
+        # Lower rank means a more popular domain, so keep the best (lowest).
+        if domain not in ranked or rank < ranked[domain]:
+            ranked[domain] = rank
+
+    return ranked
 
 
 def main():
-    inventory = read_set("data/domains.txt")
+    dirs = get_country_dirs()
 
-    files = get_country_files()
+    ranked = {}
 
-    discovered = set()
+    for dir_url in dirs:
+        csv_url = get_latest_country_file(dir_url)
 
-    for url in files:
-        discovered |= download_domains(url)
+        if not csv_url:
+            continue
 
-    inventory |= discovered
+        for domain, rank in download_ranked_domains(csv_url).items():
+            if domain not in ranked or rank < ranked[domain]:
+                ranked[domain] = rank
 
-    write_sorted_set(
-        "data/domains.txt",
-        inventory
+    # Sort by crux rank (ascending), breaking ties alphabetically.
+    ordered = sorted(ranked.items(), key=lambda item: (item[1], item[0]))
+
+    Path("data/domains.txt").write_text(
+        "\n".join(domain for domain, _ in ordered) + "\n"
     )
 
-    print(
-        f"{len(discovered):,} domains discovered "
-        f"({len(inventory):,} total)"
-    )
+    print(f"{len(ordered):,} domains written (sorted by crux rank)")
 
 
 if __name__ == "__main__":
