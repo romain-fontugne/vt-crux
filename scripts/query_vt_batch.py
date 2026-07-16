@@ -2,12 +2,14 @@ import json
 import gzip
 import os
 
-from datetime import datetime
+import time
+from datetime import datetime, timezone, timedelta
 
 import requests
 
 from utils import (
     read_set,
+    read_json,
     load_state,
     save_state,
     RateLimiter,
@@ -16,6 +18,7 @@ from utils import (
 VT_KEY = os.environ["VT_API_KEY"]
 
 BATCH_SIZE = 500
+REFRESH_DATA_TIMEOUT = timedelta(days=365)
 
 HEADERS = {
     "x-apikey": VT_KEY
@@ -43,11 +46,7 @@ def fetch_domain(domain):
         VT_LIMITER.wait()
 
         try:
-            r = requests.get(
-                VT_URL.format(domain),
-                headers=HEADERS,
-                timeout=30,
-            )
+            r = requests.get(VT_URL.format(domain), headers=HEADERS, timeout=30)
         except requests.exceptions.RequestException as exc:
             attempt += 1
 
@@ -121,46 +120,31 @@ def fetch_domain(domain):
 
 
 def main():
-    domains = sorted(
-        read_set("data/domains.txt")
-    )
+    domains = read_set("domains.txt")
 
-    queried = read_set(
-        "data/queried.txt"
-    )
+    queried = read_json("data/queried.json")
 
-    state = load_state(
-        "data/state.json"
-    )
+    # Remove domains queried a long time ago
+    now = datetime.now(timezone.utc)
+    for k, v in queried.items():
+        queried_date = datetime.fromisoformat(v)
 
-    cursor = state["cursor"]
+        if now - queried_date > REFRESH_DATA_TIMEOUT:
+            queried.pop(k)
 
-    batch = domains[
-        cursor:cursor + BATCH_SIZE
-    ]
+    state = load_state("data/state.json")
 
-    if not batch:
-        print("No domains remaining")
-        return
+    today = datetime.now(timezone.utc).strftime("%Y-%m")
 
-    today = datetime.utcnow().strftime(
-        "%Y-%m"
-    )
+    output_file = (f"data/vt/{today}.jsonl.gz")
 
-    output_file = (
-        f"data/vt/{today}.jsonl.gz"
-    )
-
-    os.makedirs(
-        "data/vt",
-        exist_ok=True
-    )
+    os.makedirs("data/vt", exist_ok=True)
 
     processed = 0
 
     with gzip.open(output_file, "at") as fp:
 
-        for domain in batch:
+        for domain in domains:
 
             if domain in queried:
                 continue
@@ -171,62 +155,39 @@ def main():
 
             record = {
                 "domain": domain,
-                "collected_at": datetime.utcnow()
+                "collected_at": datetime.now(timezone.utc)
                 .isoformat(),
                 "response": result
             }
 
-            fp.write(
-                json.dumps(record)
-            )
+            fp.write(json.dumps(record))
 
             fp.write("\n")
 
-            queried.add(domain)
+            queried[domain] = datetime.now(timezone.utc).isoformat()
 
             processed += 1
 
-    cursor += len(batch)
+            if processed == BATCH_SIZE:
+                break
 
-    state["cursor"] = cursor
+    state["processed"] = processed
 
-    state["last_run"] = (
-        datetime.utcnow().isoformat()
-    )
+    state["last_run"] = datetime.now(timezone.utc).isoformat()
 
-    save_state(
-        "data/state.json",
-        state
-    )
+    save_state("data/state.json", state)
 
-    with open(
-        "data/queried.txt",
-        "w"
-    ) as fp:
-
-        for domain in sorted(queried):
-            fp.write(domain + "\n")
+    with open("data/queried.txt", "w") as fp:
+        json.dump(queried, fp, indent=2)
 
     metadata = {
-        "cursor": cursor,
         "processed_this_run": processed,
         "total_domains": len(domains),
-        "remaining_domains":
-            max(
-                0,
-                len(domains) - cursor
-            )
+        "remaining_domains": max(0, len(domains - set(queried.keys())))
     }
 
-    with open(
-        "data/metadata.json",
-        "w"
-    ) as fp:
-        json.dump(
-            metadata,
-            fp,
-            indent=2
-        )
+    with open("data/metadata.json", "w") as fp:
+        json.dump(metadata, fp, indent=2)
 
 
 if __name__ == "__main__":

@@ -90,6 +90,15 @@ def read_set(path):
     }
 
 
+def read_json(path):
+    p = Path(path)
+
+    if not p.exists():
+        return {}
+
+    return json.loads(p.read_text())
+
+
 def write_sorted_set(path, values):
     Path(path).write_text(
         "\n".join(sorted(values)) + "\n"
