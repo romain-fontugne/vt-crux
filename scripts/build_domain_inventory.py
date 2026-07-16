@@ -5,6 +5,8 @@ from urllib.parse import urlparse
 
 from utils import RateLimiter, throttled_get
 
+TOPK = 10000
+
 COUNTRY_INDEX_URL = (
     "https://api.github.com/repos/"
     "InternetHealthReport/crux-top-lists-country/"
@@ -120,8 +122,9 @@ def main():
             continue
 
         for domain, rank in download_ranked_domains(csv_url).items():
-            if domain not in ranked or rank < ranked[domain]:
-                ranked[domain] = rank
+            if rank <= TOPK:
+                if domain not in ranked or rank < ranked[domain]:
+                    ranked[domain] = rank
 
     # Sort by crux rank (ascending), breaking ties alphabetically.
     ordered = sorted(ranked.items(), key=lambda item: (item[1], item[0]))
