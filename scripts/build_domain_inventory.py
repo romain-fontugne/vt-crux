@@ -1,4 +1,5 @@
 import gzip
+import json
 import os
 from pathlib import Path
 from urllib.parse import urlparse
@@ -71,7 +72,7 @@ def get_latest_country_file(dir_url):
             latest_name = name
             latest_url = item["download_url"]
 
-    return latest_url
+    return latest_url, latest_name
 
 
 def download_ranked_domains(csv_url):
@@ -114,9 +115,11 @@ def main():
     dirs = get_country_dirs()
 
     ranked = {}
+    processed_countries = 0
+    files_name = ''
 
     for dir_url in dirs:
-        csv_url = get_latest_country_file(dir_url)
+        csv_url, files_name = get_latest_country_file(dir_url)
 
         if not csv_url:
             continue
@@ -126,6 +129,8 @@ def main():
                 if domain not in ranked or rank < ranked[domain]:
                     ranked[domain] = rank
 
+        processed_countries += 1
+
     # Sort by crux rank (ascending), breaking ties alphabetically.
     ordered = sorted(ranked.items(), key=lambda item: (item[1], item[0]))
 
@@ -134,6 +139,19 @@ def main():
     )
 
     print(f"{len(ordered):,} domains written (sorted by crux rank)")
+
+    fname = ""
+    if files_name is not None:
+        fname = files_name.partition('.')[0]
+
+    metadata = {
+        "processed_countries": processed_countries,
+        "total_domains": len(ranked),
+        "files_date": fname
+    }
+
+    with open("data/crux_metadata.json", "w") as fp:
+        json.dump(metadata, fp, indent=2)
 
 
 if __name__ == "__main__":

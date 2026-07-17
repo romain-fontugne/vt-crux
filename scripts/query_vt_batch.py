@@ -120,7 +120,7 @@ def fetch_domain(domain):
 
 
 def main():
-    domains = read_set("domains.txt")
+    domains = read_set("data/domains.txt")
 
     queried = read_json("data/queried.json")
 
