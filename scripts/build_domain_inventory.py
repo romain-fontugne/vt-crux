@@ -129,7 +129,7 @@ def main():
     # Sort by crux rank (ascending), breaking ties alphabetically.
     ordered = sorted(ranked.items(), key=lambda item: (item[1], item[0]))
 
-    Path("domains.txt").write_text(
+    Path("data/domains.txt").write_text(
         "\n".join(domain for domain, _ in ordered) + "\n"
     )
 
