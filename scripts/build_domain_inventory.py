@@ -2,7 +2,8 @@ import gzip
 import json
 import os
 from pathlib import Path
-from urllib.parse import urlparse
+
+import tldextract
 
 from utils import RateLimiter, throttled_get
 
@@ -27,7 +28,8 @@ GITHUB_LIMITER = RateLimiter(min_interval=interval)
 
 def extract_domain(origin):
     try:
-        return urlparse(origin).hostname
+        ext = tldextract.extract(origin)
+        return ext.top_domain_under_public_suffix or None
     except Exception:
         return None
 
