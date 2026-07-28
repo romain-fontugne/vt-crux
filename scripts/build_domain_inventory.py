@@ -7,7 +7,7 @@ import tldextract
 
 from utils import RateLimiter, throttled_get
 
-TOPK = 10000
+TOPK_CRUX = 1000
 
 COUNTRY_INDEX_URL = (
     "https://api.github.com/repos/"
@@ -127,7 +127,7 @@ def main():
             continue
 
         for domain, rank in download_ranked_domains(csv_url).items():
-            if rank <= TOPK:
+            if rank <= TOPK_CRUX:
                 if domain not in ranked or rank < ranked[domain]:
                     ranked[domain] = rank
 

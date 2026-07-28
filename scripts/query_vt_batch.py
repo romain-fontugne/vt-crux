@@ -17,6 +17,7 @@ from utils import (
 
 VT_KEY = os.environ["VT_API_KEY"]
 
+# Query only 500 domains per day
 BATCH_SIZE = 500
 REFRESH_DATA_TIMEOUT = timedelta(days=365)
 
@@ -25,7 +26,7 @@ HEADERS = {
 }
 
 VT_URL = (
-    "https://www.virustotal.com/api/v3/domains/{}"
+    "https://www.virustotal.com/api/v3/domains/{}?relationships=immediate_parent,parent,resolutions,siblings,subdomains"
 )
 
 # VirusTotal's public API is limited to roughly 4 requests per minute, so keep
