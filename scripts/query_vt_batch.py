@@ -153,6 +153,13 @@ def main():
 
             result = fetch_domain(domain)
 
+            if result.get('error'):
+                print(
+                    f"Error {result['status']} stop querying VirusTotal API"
+                    f"Fetched {processed} domains"
+                )
+                break
+
             record = {
                 "domain": domain,
                 "collected_at": datetime.now(timezone.utc)
