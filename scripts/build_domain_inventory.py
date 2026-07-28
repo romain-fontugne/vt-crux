@@ -1,6 +1,8 @@
 import gzip
+import io
 import json
 import os
+import zipfile
 from pathlib import Path
 
 import tldextract
@@ -8,6 +10,9 @@ import tldextract
 from utils import RateLimiter, throttled_get
 
 TOPK_CRUX = 1000
+TOPK_TRANCO = 10000
+
+TRANCO_URL = "https://tranco-list.eu/top-1m.csv.zip"
 
 COUNTRY_INDEX_URL = (
     "https://api.github.com/repos/"
@@ -113,6 +118,46 @@ def download_ranked_domains(csv_url):
     return ranked
 
 
+def download_tranco_domains(limit=TOPK_TRANCO):
+    print(f"Downloading {TRANCO_URL}")
+
+    r = throttled_get(TRANCO_URL, timeout=120)
+
+    with zipfile.ZipFile(io.BytesIO(r.content)) as archive:
+        # The archive contains a single CSV file (top-1m.csv).
+        csv_name = archive.namelist()[0]
+        text = archive.read(csv_name).decode()
+
+    ranked = {}
+
+    for row in text.splitlines():
+        parts = row.split(",")
+
+        if len(parts) < 2:
+            continue
+
+        try:
+            rank = int(parts[0])
+        except ValueError:
+            continue
+
+        if rank > limit:
+            continue
+
+        domain = extract_domain(parts[1])
+
+        if not domain:
+            continue
+
+        domain = domain.lower()
+
+        # Lower rank means a more popular domain, so keep the best (lowest).
+        if domain not in ranked or rank < ranked[domain]:
+            ranked[domain] = rank
+
+    return ranked
+
+
 def main():
     dirs = get_country_dirs()
 
@@ -133,14 +178,40 @@ def main():
 
         processed_countries += 1
 
-    # Sort by crux rank (ascending), breaking ties alphabetically.
-    ordered = sorted(ranked.items(), key=lambda item: (item[1], item[0]))
+    crux_domains = set(ranked)
 
-    Path("data/domains.txt").write_text(
-        "\n".join(domain for domain, _ in ordered) + "\n"
+    # Sort crux domains by crux rank (ascending), breaking ties alphabetically.
+    ordered = [
+        domain
+        for domain, _ in sorted(
+            ranked.items(), key=lambda item: (item[1], item[0])
+        )
+    ]
+
+    # Append the Tranco top 10k domains that are not already covered by crux,
+    # sorted by their Tranco rank (ascending), breaking ties alphabetically.
+    tranco_ranked = download_tranco_domains(TOPK_TRANCO)
+
+    tranco_only = {
+        domain: rank
+        for domain, rank in tranco_ranked.items()
+        if domain not in crux_domains
+    }
+
+    ordered.extend(
+        domain
+        for domain, _ in sorted(
+            tranco_only.items(), key=lambda item: (item[1], item[0])
+        )
     )
 
-    print(f"{len(ordered):,} domains written (sorted by crux rank)")
+    Path("data/domains.txt").write_text("\n".join(ordered) + "\n")
+
+    print(
+        f"{len(ordered):,} domains written "
+        f"({len(crux_domains):,} from crux, "
+        f"{len(tranco_only):,} additional from tranco)"
+    )
 
     fname = ""
     if files_name is not None:
@@ -148,7 +219,9 @@ def main():
 
     metadata = {
         "processed_countries": processed_countries,
-        "total_domains": len(ranked),
+        "crux_domains": len(crux_domains),
+        "tranco_domains": len(tranco_only),
+        "total_domains": len(ordered),
         "files_date": fname
     }
 
