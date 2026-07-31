@@ -143,12 +143,21 @@ def main():
 
     processed = 0
 
+    # Domains never queried before take priority.
+    new_domains = [domain for domain in domains if domain not in queried]
+
+    # If there aren't enough new domains to fill the batch, re-query the
+    # domains that were queried the longest time ago.
+    stale_domains = sorted(
+        (domain for domain in domains if domain in queried),
+        key=lambda domain: queried[domain],
+    )
+
+    candidates = new_domains + stale_domains
+
     with gzip.open(output_file, "at") as fp:
 
-        for domain in domains:
-
-            if domain in queried:
-                continue
+        for domain in candidates:
 
             print(domain)
 

@@ -144,7 +144,7 @@ def download_tranco_domains(limit=TOPK_TRANCO):
         if rank > limit:
             continue
 
-        domain = extract_domain(parts[1])
+        domain = parts[1]
 
         if not domain:
             continue
